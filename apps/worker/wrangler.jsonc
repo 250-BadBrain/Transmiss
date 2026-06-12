@@ -1,6 +1,6 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "relay-transmiss",
+  "name": "transmiss-server",
   "main": "src/index.ts",
   "compatibility_date": "2025-09-01",
   "workers_dev": false,

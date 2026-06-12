@@ -10,6 +10,7 @@ const ROOM_ID_PATTERN = /^[A-Z0-9]{8}$/;
 const WEB_SOCKET_UPGRADE = "websocket";
 const ALLOWED_ORIGINS = new Set([
   "https://transmiss.lab.h2seo4.win",
+  "https://p2p.lab.h2seo4.win",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ]);

@@ -691,8 +691,11 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
         if (message.type === "peer-joined") {
           setPeerJoined(true);
 
-          if (roleRef.current === "initiator") {
-            void rtcRef.current?.start().catch((error: unknown) => {
+          const role = roleRef.current;
+          const session = rtcRef.current ?? (role ? createRtcSession(role) : null);
+
+          if (role === "initiator") {
+            void session?.start().catch((error: unknown) => {
               addLog(
                 error instanceof Error
                   ? `WebRTC offer error: ${error.message}`
