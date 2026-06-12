@@ -103,6 +103,14 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
+.error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #ffb4b4;
+  font-size: 13px;
+  text-align: left;
+}
+
 @media (max-width: 520px) {
   .panel {
     padding: 34px 20px;

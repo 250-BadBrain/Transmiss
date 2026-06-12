@@ -1,3 +1,4 @@
+import { useState } from "preact/hooks";
 import styles from "./HomePage.module.css";
 
 type HomePageProps = {
@@ -6,6 +7,7 @@ type HomePageProps = {
 
 const ROOM_ID_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOM_ID_LENGTH = 8;
+const ROOM_ID_PATTERN = /^[A-Z0-9]{8}$/;
 
 const createRoomId = (): string => {
   const bytes = new Uint8Array(ROOM_ID_LENGTH);
@@ -18,12 +20,34 @@ const createRoomId = (): string => {
 };
 
 export const HomePage = ({ onNavigate }: HomePageProps) => {
+  const [roomCode, setRoomCode] = useState("");
+  const [error, setError] = useState("");
+
   const handleCreateRoom = () => {
     onNavigate(`/room/${createRoomId()}`);
   };
 
   const handleJoinSubmit = (event: Event) => {
     event.preventDefault();
+    const normalizedRoomCode = roomCode.trim().toUpperCase();
+
+    if (!ROOM_ID_PATTERN.test(normalizedRoomCode)) {
+      setError("请输入 8 位房间码");
+      return;
+    }
+
+    onNavigate(`/room/${normalizedRoomCode}`);
+  };
+
+  const handleRoomCodeInput = (event: Event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const normalizedValue = input.value
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, ROOM_ID_LENGTH);
+
+    setRoomCode(normalizedValue);
+    setError("");
   };
 
   return (
@@ -44,13 +68,17 @@ export const HomePage = ({ onNavigate }: HomePageProps) => {
             type="text"
             inputMode="text"
             autoComplete="off"
-            maxLength={8}
+            maxLength={ROOM_ID_LENGTH}
+            value={roomCode}
             placeholder="输入房间码"
             aria-label="输入房间码"
+            aria-invalid={error ? "true" : "false"}
+            onInput={handleRoomCodeInput}
           />
-          <button class={styles.secondaryButton} type="button">
+          <button class={styles.secondaryButton} type="submit">
             加入房间
           </button>
+          {error ? <p class={styles.error}>{error}</p> : null}
         </form>
       </section>
     </main>
