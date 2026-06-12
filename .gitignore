@@ -1,0 +1,26 @@
+# dependencies
+node_modules
+
+# build outputs
+dist
+*.tsbuildinfo
+
+# local environment
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# Cloudflare / Wrangler
+.wrangler
+
+# logs
+*.log
+.*-dev*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode

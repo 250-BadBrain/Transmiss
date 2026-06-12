@@ -1,0 +1,119 @@
+.page {
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+  padding: 32px 18px;
+}
+
+.panel {
+  width: min(100%, 520px);
+  padding: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  background: rgba(17, 21, 31, 0.82);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.38);
+  text-align: center;
+}
+
+.heading {
+  margin-bottom: 42px;
+}
+
+.heading h1 {
+  margin: 0;
+  color: #f7f9ff;
+  font-size: clamp(44px, 12vw, 76px);
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 0.95;
+}
+
+.heading p {
+  margin: 16px 0 0;
+  color: #99a3b7;
+  font-size: 17px;
+}
+
+.primaryButton,
+.secondaryButton {
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.primaryButton {
+  width: 100%;
+  min-height: 56px;
+  padding: 0 24px;
+  color: #08100f;
+  background: #66f2c2;
+  box-shadow: 0 14px 34px rgba(102, 242, 194, 0.2);
+}
+
+.primaryButton:hover,
+.secondaryButton:hover {
+  transform: translateY(-1px);
+}
+
+.primaryButton:active,
+.secondaryButton:active {
+  transform: translateY(0);
+}
+
+.joinForm {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.roomInput {
+  min-width: 0;
+  height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: #f7f9ff;
+  background: rgba(255, 255, 255, 0.045);
+  font: inherit;
+  outline: none;
+  padding: 0 20px;
+  text-transform: uppercase;
+}
+
+.roomInput::placeholder {
+  color: #6f7890;
+  text-transform: none;
+}
+
+.roomInput:focus {
+  border-color: rgba(102, 242, 194, 0.62);
+  box-shadow: 0 0 0 4px rgba(102, 242, 194, 0.12);
+}
+
+.secondaryButton {
+  min-height: 52px;
+  padding: 0 22px;
+  color: #e7edf8;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 520px) {
+  .panel {
+    padding: 34px 20px;
+    border-radius: 20px;
+  }
+
+  .joinForm {
+    grid-template-columns: 1fr;
+  }
+
+  .secondaryButton {
+    width: 100%;
+  }
+}

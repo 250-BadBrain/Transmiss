@@ -1,0 +1,16 @@
+{
+  "name": "transmiss",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm dev:web",
+    "dev:web": "pnpm --filter @transmiss/web run dev",
+    "dev:worker": "pnpm --filter @transmiss/worker dev",
+    "deploy:worker": "pnpm --filter @transmiss/worker run deploy",
+    "build": "pnpm -r build",
+    "preview": "pnpm --filter @transmiss/web preview",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "packageManager": "pnpm@10.12.1"
+}
