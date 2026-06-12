@@ -6,6 +6,7 @@ import type {
   WorkerToClientMessage,
 } from "@transmiss/shared";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { DiagnosticsPanel } from "../components/DiagnosticsPanel";
 import type {
   DataChannelState,
   WebRtcConnectionState,
@@ -13,6 +14,8 @@ import type {
 } from "../lib/webrtc";
 import { sha256Hex, shortHash } from "../lib/hash";
 import { WebRtcSession } from "../lib/webrtc";
+import type { WebRtcDiagnostics } from "../lib/webrtcStats";
+import { collectWebRtcStats } from "../lib/webrtcStats";
 import styles from "./RoomPage.module.css";
 
 type RoomPageProps = {
@@ -88,6 +91,13 @@ const CHUNK_SIZE = 64 * 1024;
 const BUFFERED_AMOUNT_HIGH = 8 * 1024 * 1024;
 const BUFFERED_AMOUNT_LOW = 4 * 1024 * 1024;
 const UI_UPDATE_INTERVAL_MS = 100;
+const DIAGNOSTICS_INTERVAL_MS = 1_000;
+const TRANSFER_PARAMETERS = {
+  chunkSize: CHUNK_SIZE,
+  bufferedAmountHigh: BUFFERED_AMOUNT_HIGH,
+  bufferedAmountLow: BUFFERED_AMOUNT_LOW,
+  uiUpdateIntervalMs: UI_UPDATE_INTERVAL_MS,
+};
 
 const getSignalingUrl = (roomId: string): string => {
   const configuredUrl = import.meta.env.VITE_SIGNAL_URL as string | undefined;
@@ -220,6 +230,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [outgoingFile, setOutgoingFile] = useState<OutgoingFile | null>(null);
   const [incomingFile, setIncomingFile] = useState<IncomingFile | null>(null);
+  const [diagnostics, setDiagnostics] = useState<WebRtcDiagnostics | null>(null);
   const signalingUrl = useMemo(() => getSignalingUrl(roomId), [roomId]);
 
   const addLog = (textValue: string) => {
@@ -643,6 +654,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
     rtcRef.current = session;
     setWebRtcState("new");
     setDataChannelState("idle");
+    setDiagnostics(null);
     addLog(`WebRTC role: ${role}`);
     return session;
   };
@@ -667,6 +679,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
     setLogs([]);
     setOutgoingFile(null);
     setIncomingFile(null);
+    setDiagnostics(null);
 
     socket.addEventListener("open", () => {
       setSocketStatus("open");
@@ -716,6 +729,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
           rtcRef.current = null;
           setWebRtcState("closed");
           setDataChannelState("idle");
+          setDiagnostics(null);
           addLog("peer left");
           return;
         }
@@ -755,8 +769,34 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
       rtcRef.current = null;
       incomingMetadataRef.current = null;
       revokeDownloadUrl();
+      setDiagnostics(null);
     };
   }, [roomId, signalingUrl]);
+
+  useEffect(() => {
+    let active = true;
+
+    const collect = () => {
+      const session = rtcRef.current;
+
+      void collectWebRtcStats(
+        session?.getPeerConnection() ?? null,
+        session?.getDataChannel() ?? null,
+      ).then((nextDiagnostics) => {
+        if (active) {
+          setDiagnostics(nextDiagnostics);
+        }
+      });
+    };
+
+    collect();
+    const intervalId = window.setInterval(collect, DIAGNOSTICS_INTERVAL_MS);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
+  }, [roomId]);
 
   const handleSendText = (event: Event) => {
     event.preventDefault();
@@ -905,6 +945,11 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
             )}
           </div>
         </section>
+
+        <DiagnosticsPanel
+          diagnostics={diagnostics}
+          transferParameters={TRANSFER_PARAMETERS}
+        />
 
         <section class={styles.dropZone} aria-label="文件上传区域">
           <p>Drag files here</p>

@@ -292,6 +292,14 @@ export class WebRtcSession {
     return this.dataChannel?.bufferedAmount ?? 0;
   }
 
+  getPeerConnection(): RTCPeerConnection {
+    return this.peerConnection;
+  }
+
+  getDataChannel(): RTCDataChannel | null {
+    return this.dataChannel;
+  }
+
   async waitForBufferedAmountBelow(bytes: number): Promise<void> {
     const channel = this.dataChannel;
 
