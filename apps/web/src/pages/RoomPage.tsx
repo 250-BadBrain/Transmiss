@@ -85,7 +85,8 @@ type ReceiveTransfer = {
 };
 
 const CHUNK_SIZE = 64 * 1024;
-const MAX_BUFFERED_AMOUNT = 1024 * 1024;
+const BUFFERED_AMOUNT_HIGH = 8 * 1024 * 1024;
+const BUFFERED_AMOUNT_LOW = 4 * 1024 * 1024;
 const UI_UPDATE_INTERVAL_MS = 100;
 
 const getSignalingUrl = (roomId: string): string => {
@@ -348,7 +349,9 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
           throw new Error("Transfer rejected");
         }
 
-        await session.waitForBufferedAmountBelow(MAX_BUFFERED_AMOUNT);
+        if (session.getBufferedAmount() > BUFFERED_AMOUNT_HIGH) {
+          await session.waitForBufferedAmountBelow(BUFFERED_AMOUNT_LOW);
+        }
 
         const start = chunkIndex * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, file.size);

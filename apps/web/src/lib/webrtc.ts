@@ -288,6 +288,10 @@ export class WebRtcSession {
     return true;
   }
 
+  getBufferedAmount(): number {
+    return this.dataChannel?.bufferedAmount ?? 0;
+  }
+
   async waitForBufferedAmountBelow(bytes: number): Promise<void> {
     const channel = this.dataChannel;
 
