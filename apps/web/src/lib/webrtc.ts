@@ -172,7 +172,10 @@ export const createPeerConnectionConfig = (): RTCConfiguration => {
 
   if (turnUsername && turnCredential) {
     iceServers.push({
-      urls: "turn:turn.h2seo4.win:3478",
+      urls: [
+        "turn:turn.h2seo4.win:3478?transport=udp",
+        "turn:turn.h2seo4.win:3478?transport=tcp",
+      ],
       username: turnUsername,
       credential: turnCredential,
     });

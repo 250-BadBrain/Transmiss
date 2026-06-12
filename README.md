@@ -43,7 +43,8 @@ stun:turn.h2seo4.win:3478
 When credentials are present, it also uses:
 
 ```text
-turn:turn.h2seo4.win:3478
+turn:turn.h2seo4.win:3478?transport=udp
+turn:turn.h2seo4.win:3478?transport=tcp
 ```
 
 ## Scripts
@@ -107,6 +108,8 @@ VITE_SIGNAL_URL=wss://relay-transmiss.lab.h2seo4.win/ws
 VITE_TURN_USERNAME=<your-turn-username>
 VITE_TURN_CREDENTIAL=<your-turn-password>
 ```
+
+`VITE_TURN_USERNAME` and `VITE_TURN_CREDENTIAL` must be set in Cloudflare Pages and redeployed before production browsers will use TURN.
 
 Pages custom domain:
 
