@@ -381,6 +381,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
       }
 
       updateOutgoingProgress(transfer, file.size, file.size, true);
+      await session.waitForBufferedAmountBelow(0);
 
       if (!sendP2PMessage({ type: "file-end", id: fileId })) {
         throw new Error("Unable to send file-end");

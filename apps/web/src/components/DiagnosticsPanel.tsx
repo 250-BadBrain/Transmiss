@@ -123,6 +123,8 @@ export const DiagnosticsPanel = ({
             <dd>{formatNullable(diagnostics?.candidate.localPort ?? null)}</dd>
             <dt>remote port</dt>
             <dd>{formatNullable(diagnostics?.candidate.remotePort ?? null)}</dd>
+            <dt>relay protocol</dt>
+            <dd>{formatNullable(diagnostics?.candidate.relayProtocol ?? null)}</dd>
           </dl>
         </section>
 
