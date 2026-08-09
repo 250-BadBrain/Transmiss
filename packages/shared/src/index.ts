@@ -82,6 +82,13 @@ export type P2PFileProgressMessage = {
   readonly total: number;
 };
 
+export type P2PFileChunkAckMessage = {
+  readonly type: "file-chunk-ack";
+  readonly id: string;
+  readonly receivedBytes: number;
+  readonly receivedChunks: number;
+};
+
 export type P2PFileVerifiedMessage = {
   readonly type: "file-verified";
   readonly id: string;
@@ -109,6 +116,7 @@ export type P2PDataChannelMessage =
   | P2PFileStartMessage
   | P2PFileEndMessage
   | P2PFileProgressMessage
+  | P2PFileChunkAckMessage
   | P2PFileVerifiedMessage
   | P2PFileCorruptedMessage;
 

@@ -107,6 +107,14 @@ const isP2PDataChannelMessage = (
     );
   }
 
+  if (value.type === "file-chunk-ack") {
+    return (
+      typeof value.id === "string" &&
+      typeof value.receivedBytes === "number" &&
+      typeof value.receivedChunks === "number"
+    );
+  }
+
   return false;
 };
 
@@ -128,6 +136,9 @@ const buildBinaryFrame = (
 
   return new Blob([headerLength, encodedHeader, payload]);
 };
+
+const isOpen = (channel: RTCDataChannel | null): channel is RTCDataChannel =>
+  channel?.readyState === "open";
 
 const parseBinaryFrame = (
   frame: ArrayBuffer,
@@ -281,10 +292,7 @@ export class WebRtcSession {
   }
 
   sendDataMessage(message: P2PDataChannelMessage): boolean {
-    if (
-      !this.controlDataChannel ||
-      this.controlDataChannel.readyState !== "open"
-    ) {
+    if (!isOpen(this.controlDataChannel)) {
       return false;
     }
 
@@ -293,16 +301,26 @@ export class WebRtcSession {
   }
 
   sendBinaryMessage(header: P2PFileChunkHeader, payload: ArrayBuffer): boolean {
-    if (!this.fileDataChannel || this.fileDataChannel.readyState !== "open") {
+    const channel = isOpen(this.fileDataChannel)
+      ? this.fileDataChannel
+      : isOpen(this.controlDataChannel)
+        ? this.controlDataChannel
+        : null;
+
+    if (!channel) {
       return false;
     }
 
-    this.fileDataChannel.send(buildBinaryFrame(header, payload));
+    channel.send(buildBinaryFrame(header, payload));
     return true;
   }
 
   getBufferedAmount(): number {
-    return this.fileDataChannel?.bufferedAmount ?? 0;
+    return (
+      this.fileDataChannel?.bufferedAmount ??
+      this.controlDataChannel?.bufferedAmount ??
+      0
+    );
   }
 
   getPeerConnection(): RTCPeerConnection {
@@ -314,7 +332,9 @@ export class WebRtcSession {
   }
 
   async waitForBufferedAmountBelow(bytes: number): Promise<void> {
-    const channel = this.fileDataChannel;
+    const channel = isOpen(this.fileDataChannel)
+      ? this.fileDataChannel
+      : this.controlDataChannel;
 
     if (!channel || channel.readyState !== "open") {
       throw new Error("DataChannel is not open");
@@ -418,7 +438,7 @@ export class WebRtcSession {
     const controlState = this.controlDataChannel?.readyState;
     const fileState = this.fileDataChannel?.readyState;
 
-    if (controlState === "open" && fileState === "open") {
+    if (controlState === "open") {
       this.options.onDataChannelStateChange("open");
       return;
     }

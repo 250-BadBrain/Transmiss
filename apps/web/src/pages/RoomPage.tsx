@@ -69,16 +69,20 @@ type IncomingFile = P2PFileMetadata &
   };
 
 type SendTransfer = {
+  ackedBytes: number;
   aborted: boolean;
   id: string;
   lastUiAt: number;
   startedAt: number;
+  totalBytes: number;
 };
 
 type ReceiveTransfer = {
   chunks: Array<ArrayBuffer | undefined>;
   chunkSize: number;
+  endReceived: boolean;
   id: string;
+  lastAckAt: number;
   lastUiAt: number;
   metadata: P2PFileMetadata;
   receivedBytes: number;
@@ -92,6 +96,7 @@ const BUFFERED_AMOUNT_HIGH = 2 * 1024 * 1024;
 const BUFFERED_AMOUNT_LOW = 1 * 1024 * 1024;
 const UI_UPDATE_INTERVAL_MS = 100;
 const DIAGNOSTICS_INTERVAL_MS = 1_000;
+const ACK_INTERVAL_BYTES = 256 * 1024;
 const TRANSFER_PARAMETERS = {
   chunkSize: CHUNK_SIZE,
   bufferedAmountHigh: BUFFERED_AMOUNT_HIGH,
@@ -194,6 +199,11 @@ const emptyTransferView: TransferView = {
   eta: "--:--",
 };
 
+const sleep = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds);
+  });
+
 const getStatusClass = (status: OutgoingFileStatus | IncomingFileStatus): string => {
   const baseClass = styles.fileStatus ?? "";
 
@@ -217,6 +227,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
   const sendTransferRef = useRef<SendTransfer | null>(null);
   const receiveTransferRef = useRef<ReceiveTransfer | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const peerJoinedRef = useRef(false);
   const roleRef = useRef<WebRtcSessionRole | null>(null);
   const logIdRef = useRef(0);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
@@ -328,10 +339,12 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
     const { file } = selected;
     const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     const transfer: SendTransfer = {
+      ackedBytes: 0,
       aborted: false,
       id: fileId,
       lastUiAt: 0,
       startedAt: performance.now(),
+      totalBytes: file.size,
     };
 
     sendTransferRef.current = transfer;
@@ -352,8 +365,6 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
       ) {
         throw new Error("Unable to send file-start");
       }
-
-      let loaded = 0;
 
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
         if (transfer.aborted) {
@@ -376,19 +387,27 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
           throw new Error("Unable to send file chunk");
         }
 
-        loaded += chunk.byteLength;
-        updateOutgoingProgress(transfer, loaded, file.size);
       }
 
-      updateOutgoingProgress(transfer, file.size, file.size, true);
       await session.waitForBufferedAmountBelow(0);
 
       if (!sendP2PMessage({ type: "file-end", id: fileId })) {
         throw new Error("Unable to send file-end");
       }
 
+      while (!transfer.aborted && transfer.ackedBytes < file.size) {
+        await sleep(UI_UPDATE_INTERVAL_MS);
+      }
+
+      if (transfer.aborted) {
+        throw new Error("Transfer rejected");
+      }
+
+      updateOutgoingProgress(transfer, file.size, file.size, true);
       setOutgoingFile((current) =>
-        current?.id === fileId ? { ...current, status: "sent", progress: 100, eta: "0:00" } : current,
+        current?.id === fileId
+          ? { ...current, status: "sent", progress: 100, eta: "0:00" }
+          : current,
       );
       addLog("file sent");
     } catch (error) {
@@ -410,119 +429,30 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
     }
   };
 
-  const handleP2PMessage = (message: P2PDataChannelMessage) => {
-    if (message.type === "text") {
-      addLog(`received: ${message.text}`);
+  const sendReceiveAck = (transfer: ReceiveTransfer, force = false) => {
+    if (
+      !force &&
+      transfer.receivedBytes - transfer.lastAckAt < ACK_INTERVAL_BYTES
+    ) {
       return;
     }
 
-    if (message.type === "file-meta") {
-      revokeDownloadUrl();
-      receiveTransferRef.current = null;
-      incomingMetadataRef.current = message.file;
-      setIncomingFile({
-        ...message.file,
-        ...emptyTransferView,
-        status: "pending",
-      });
-      addLog(`file metadata received: ${message.file.name}`);
+    transfer.lastAckAt = transfer.receivedBytes;
+    sendP2PMessage({
+      type: "file-chunk-ack",
+      id: transfer.id,
+      receivedBytes: transfer.receivedBytes,
+      receivedChunks: transfer.receivedChunks,
+    });
+  };
+
+  const finishIncomingTransfer = (transfer: ReceiveTransfer) => {
+    if (!transfer.endReceived || transfer.receivedChunks !== transfer.totalChunks) {
       return;
     }
 
-    if (message.type === "file-accept") {
-      setOutgoingFile((current) =>
-        current?.id === message.id
-          ? { ...current, status: "waiting-to-send" }
-          : current,
-      );
-      addLog("file accepted; starting transfer");
-      void sendSelectedFile(message.id);
-      return;
-    }
-
-    if (message.type === "file-reject") {
-      const transfer = sendTransferRef.current;
-
-      if (transfer?.id === message.id) {
-        transfer.aborted = true;
-      }
-
-      setOutgoingFile((current) =>
-        current?.id === message.id ? { ...current, status: "rejected" } : current,
-      );
-      addLog("file rejected");
-      return;
-    }
-
-    if (message.type === "file-start") {
-      const metadata = incomingMetadataRef.current;
-
-      if (!metadata || metadata.id !== message.id) {
-        return;
-      }
-
-      receiveTransferRef.current = {
-        chunks: new Array<ArrayBuffer | undefined>(message.totalChunks),
-        chunkSize: message.chunkSize,
-        id: message.id,
-        lastUiAt: 0,
-        metadata,
-        receivedBytes: 0,
-        receivedChunks: 0,
-        startedAt: performance.now(),
-        totalChunks: message.totalChunks,
-      };
-
-      setIncomingFile((current) =>
-        current?.id === message.id
-          ? {
-          ...current,
-          ...emptyTransferView,
-          status: "receiving",
-            }
-          : current,
-      );
-      return;
-    }
-
-    if (message.type === "file-progress") {
-      return;
-    }
-
-    if (message.type === "file-verified") {
-      setOutgoingFile((current) =>
-        current?.id === message.id
-          ? { ...current, status: "verified", progress: 100, eta: "0:00" }
-          : current,
-      );
-      addLog(`file verified: ${shortHash(message.sha256)}`);
-      return;
-    }
-
-    if (message.type === "file-corrupted") {
-      setOutgoingFile((current) =>
-        current?.id === message.id
-          ? {
-              ...current,
-              status: "corrupted",
-              error: `Hash mismatch ${shortHash(message.actualSha256)}`,
-            }
-          : current,
-      );
-      addLog("file corrupted on receiver");
-      return;
-    }
-
-    const transfer = receiveTransferRef.current;
-
-    if (!transfer || transfer.id !== message.id) {
-      return;
-    }
-
-    if (transfer.receivedChunks !== transfer.totalChunks) {
-      markIncomingError(message.id, "Missing file chunks");
-      return;
-    }
+    receiveTransferRef.current = null;
+    sendReceiveAck(transfer, true);
 
     const chunks = transfer.chunks.filter(
       (chunk): chunk is ArrayBuffer => chunk !== undefined,
@@ -531,7 +461,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
 
     updateIncomingProgress(transfer, true);
     setIncomingFile((current) =>
-      current?.id === message.id
+      current?.id === transfer.id
         ? {
             ...current,
             eta: "0:00",
@@ -597,10 +527,144 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
           metadata.id,
           error instanceof Error ? error.message : "Hash verification failed",
         );
-      } finally {
-        receiveTransferRef.current = null;
       }
     })();
+  };
+
+  const handleP2PMessage = (message: P2PDataChannelMessage) => {
+    if (message.type === "text") {
+      addLog(`received: ${message.text}`);
+      return;
+    }
+
+    if (message.type === "file-meta") {
+      revokeDownloadUrl();
+      receiveTransferRef.current = null;
+      incomingMetadataRef.current = message.file;
+      setIncomingFile({
+        ...message.file,
+        ...emptyTransferView,
+        status: "pending",
+      });
+      addLog(`file metadata received: ${message.file.name}`);
+      return;
+    }
+
+    if (message.type === "file-accept") {
+      setOutgoingFile((current) =>
+        current?.id === message.id
+          ? { ...current, status: "waiting-to-send" }
+          : current,
+      );
+      addLog("file accepted; starting transfer");
+      void sendSelectedFile(message.id);
+      return;
+    }
+
+    if (message.type === "file-reject") {
+      const transfer = sendTransferRef.current;
+
+      if (transfer?.id === message.id) {
+        transfer.aborted = true;
+      }
+
+      setOutgoingFile((current) =>
+        current?.id === message.id ? { ...current, status: "rejected" } : current,
+      );
+      addLog("file rejected");
+      return;
+    }
+
+    if (message.type === "file-start") {
+      const metadata = incomingMetadataRef.current;
+
+      if (!metadata || metadata.id !== message.id) {
+        return;
+      }
+
+      receiveTransferRef.current = {
+        chunks: new Array<ArrayBuffer | undefined>(message.totalChunks),
+        chunkSize: message.chunkSize,
+        endReceived: false,
+        id: message.id,
+        lastAckAt: 0,
+        lastUiAt: 0,
+        metadata,
+        receivedBytes: 0,
+        receivedChunks: 0,
+        startedAt: performance.now(),
+        totalChunks: message.totalChunks,
+      };
+
+      setIncomingFile((current) =>
+        current?.id === message.id
+          ? {
+          ...current,
+          ...emptyTransferView,
+          status: "receiving",
+            }
+          : current,
+      );
+      return;
+    }
+
+    if (message.type === "file-progress") {
+      return;
+    }
+
+    if (message.type === "file-chunk-ack") {
+      const transfer = sendTransferRef.current;
+
+      if (!transfer || transfer.id !== message.id) {
+        return;
+      }
+
+      transfer.ackedBytes = Math.max(
+        transfer.ackedBytes,
+        Math.min(message.receivedBytes, transfer.totalBytes),
+      );
+      updateOutgoingProgress(
+        transfer,
+        transfer.ackedBytes,
+        transfer.totalBytes,
+      );
+      return;
+    }
+
+    if (message.type === "file-verified") {
+      setOutgoingFile((current) =>
+        current?.id === message.id
+          ? { ...current, status: "verified", progress: 100, eta: "0:00" }
+          : current,
+      );
+      addLog(`file verified: ${shortHash(message.sha256)}`);
+      return;
+    }
+
+    if (message.type === "file-corrupted") {
+      setOutgoingFile((current) =>
+        current?.id === message.id
+          ? {
+              ...current,
+              status: "corrupted",
+              error: `Hash mismatch ${shortHash(message.actualSha256)}`,
+            }
+          : current,
+      );
+      addLog("file corrupted on receiver");
+      return;
+    }
+
+    if (message.type === "file-end") {
+      const transfer = receiveTransferRef.current;
+
+      if (!transfer || transfer.id !== message.id) {
+        return;
+      }
+
+      transfer.endReceived = true;
+      finishIncomingTransfer(transfer);
+    }
   };
 
   const handleBinaryMessage = (
@@ -624,7 +688,9 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
     transfer.chunks[header.chunkIndex] = payload;
     transfer.receivedBytes += payload.byteLength;
     transfer.receivedChunks += 1;
+    sendReceiveAck(transfer, transfer.receivedChunks === transfer.totalChunks);
     updateIncomingProgress(transfer);
+    finishIncomingTransfer(transfer);
   };
 
   const createRtcSession = (role: WebRtcSessionRole): WebRtcSession => {
@@ -668,6 +734,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
     incomingMetadataRef.current = null;
     revokeDownloadUrl();
     setSocketStatus("connecting");
+    peerJoinedRef.current = false;
     setPeerJoined(false);
     setRoomRole(null);
     setWebRtcState("new");
@@ -696,11 +763,23 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
 
         if (message.type === "room-created" && message.role) {
           setRoomRole(message.role);
-          createRtcSession(toWebRtcRole(message.role));
+          const role = toWebRtcRole(message.role);
+          const session = createRtcSession(role);
+
+          if (role === "initiator" && peerJoinedRef.current) {
+            void session.start().catch((error: unknown) => {
+              addLog(
+                error instanceof Error
+                  ? `WebRTC offer error: ${error.message}`
+                  : "WebRTC offer error",
+              );
+            });
+          }
           return;
         }
 
         if (message.type === "peer-joined") {
+          peerJoinedRef.current = true;
           setPeerJoined(true);
 
           const role = roleRef.current;
@@ -720,6 +799,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
         }
 
         if (message.type === "peer-left") {
+          peerJoinedRef.current = false;
           setPeerJoined(false);
           rtcRef.current?.close();
           rtcRef.current = null;
@@ -751,6 +831,7 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
 
     socket.addEventListener("close", () => {
       setSocketStatus("closed");
+      peerJoinedRef.current = false;
       setPeerJoined(false);
     });
 
