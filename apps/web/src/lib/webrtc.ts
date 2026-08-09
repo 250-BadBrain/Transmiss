@@ -21,8 +21,11 @@ type WebRtcSessionOptions = {
   readonly onLog: (message: string) => void;
 };
 
-const DATA_CHANNEL_LABEL = "transmiss-text";
+const CONTROL_DATA_CHANNEL_LABEL = "transmiss-control";
+const LEGACY_DATA_CHANNEL_LABEL = "transmiss-text";
+const FILE_DATA_CHANNEL_LABEL = "transmiss-file";
 const BINARY_HEADER_BYTES = 4;
+const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const isWebRtcSignalPayload = (
@@ -113,6 +116,19 @@ const isP2PFileChunkHeader = (value: unknown): value is P2PFileChunkHeader =>
   typeof value.id === "string" &&
   typeof value.chunkIndex === "number";
 
+const buildBinaryFrame = (
+  header: P2PFileChunkHeader,
+  payload: ArrayBuffer,
+): Blob => {
+  const encodedHeader = encoder.encode(JSON.stringify(header));
+  const headerLength = new ArrayBuffer(BINARY_HEADER_BYTES);
+  const view = new DataView(headerLength);
+
+  view.setUint32(0, encodedHeader.byteLength, false);
+
+  return new Blob([headerLength, encodedHeader, payload]);
+};
+
 const parseBinaryFrame = (
   frame: ArrayBuffer,
 ): { readonly header: P2PFileChunkHeader; readonly payload: ArrayBuffer } | null => {
@@ -169,7 +185,8 @@ export const createPeerConnectionConfig = (): RTCConfiguration => {
 export class WebRtcSession {
   private readonly peerConnection: RTCPeerConnection;
   private readonly pendingCandidates: RTCIceCandidateInit[] = [];
-  private dataChannel: RTCDataChannel | null = null;
+  private controlDataChannel: RTCDataChannel | null = null;
+  private fileDataChannel: RTCDataChannel | null = null;
   private pendingBinaryHeader: P2PFileChunkHeader | null = null;
   private started = false;
   private closed = false;
@@ -197,7 +214,12 @@ export class WebRtcSession {
 
     if (this.options.role === "receiver") {
       this.peerConnection.addEventListener("datachannel", (event) => {
-        this.attachDataChannel(event.channel);
+        if (event.channel.label === FILE_DATA_CHANNEL_LABEL) {
+          this.attachFileDataChannel(event.channel);
+          return;
+        }
+
+        this.attachControlDataChannel(event.channel);
       });
     }
   }
@@ -208,9 +230,14 @@ export class WebRtcSession {
     }
 
     this.started = true;
-    this.attachDataChannel(
-      this.peerConnection.createDataChannel(DATA_CHANNEL_LABEL, {
+    this.attachControlDataChannel(
+      this.peerConnection.createDataChannel(CONTROL_DATA_CHANNEL_LABEL, {
         ordered: true,
+      }),
+    );
+    this.attachFileDataChannel(
+      this.peerConnection.createDataChannel(FILE_DATA_CHANNEL_LABEL, {
+        ordered: false,
       }),
     );
 
@@ -254,26 +281,28 @@ export class WebRtcSession {
   }
 
   sendDataMessage(message: P2PDataChannelMessage): boolean {
-    if (!this.dataChannel || this.dataChannel.readyState !== "open") {
+    if (
+      !this.controlDataChannel ||
+      this.controlDataChannel.readyState !== "open"
+    ) {
       return false;
     }
 
-    this.dataChannel.send(JSON.stringify(message));
+    this.controlDataChannel.send(JSON.stringify(message));
     return true;
   }
 
   sendBinaryMessage(header: P2PFileChunkHeader, payload: ArrayBuffer): boolean {
-    if (!this.dataChannel || this.dataChannel.readyState !== "open") {
+    if (!this.fileDataChannel || this.fileDataChannel.readyState !== "open") {
       return false;
     }
 
-    this.dataChannel.send(JSON.stringify(header));
-    this.dataChannel.send(payload);
+    this.fileDataChannel.send(buildBinaryFrame(header, payload));
     return true;
   }
 
   getBufferedAmount(): number {
-    return this.dataChannel?.bufferedAmount ?? 0;
+    return this.fileDataChannel?.bufferedAmount ?? 0;
   }
 
   getPeerConnection(): RTCPeerConnection {
@@ -281,11 +310,11 @@ export class WebRtcSession {
   }
 
   getDataChannel(): RTCDataChannel | null {
-    return this.dataChannel;
+    return this.fileDataChannel ?? this.controlDataChannel;
   }
 
   async waitForBufferedAmountBelow(bytes: number): Promise<void> {
-    const channel = this.dataChannel;
+    const channel = this.fileDataChannel;
 
     if (!channel || channel.readyState !== "open") {
       throw new Error("DataChannel is not open");
@@ -320,7 +349,8 @@ export class WebRtcSession {
 
   close(): void {
     this.closed = true;
-    this.dataChannel?.close();
+    this.controlDataChannel?.close();
+    this.fileDataChannel?.close();
     this.peerConnection.close();
     this.options.onDataChannelStateChange("closed");
     this.options.onConnectionStateChange("closed");
@@ -384,24 +414,51 @@ export class WebRtcSession {
     }
   }
 
-  private attachDataChannel(channel: RTCDataChannel): void {
-    this.dataChannel = channel;
+  private updateDataChannelState(): void {
+    const controlState = this.controlDataChannel?.readyState;
+    const fileState = this.fileDataChannel?.readyState;
+
+    if (controlState === "open" && fileState === "open") {
+      this.options.onDataChannelStateChange("open");
+      return;
+    }
+
+    if (controlState === "closing" || fileState === "closing") {
+      this.options.onDataChannelStateChange("closing");
+      return;
+    }
+
+    if (controlState === "closed" || fileState === "closed") {
+      this.options.onDataChannelStateChange("closed");
+      return;
+    }
+
+    if (controlState || fileState) {
+      this.options.onDataChannelStateChange("connecting");
+      return;
+    }
+
+    this.options.onDataChannelStateChange("idle");
+  }
+
+  private attachControlDataChannel(channel: RTCDataChannel): void {
+    this.controlDataChannel = channel;
     channel.binaryType = "arraybuffer";
-    this.options.onDataChannelStateChange(channel.readyState);
+    this.updateDataChannelState();
 
     channel.addEventListener("open", () => {
-      this.options.onDataChannelStateChange(channel.readyState);
-      this.options.onLog("DataChannel opened");
+      this.updateDataChannelState();
+      this.options.onLog("control DataChannel opened");
     });
 
     channel.addEventListener("close", () => {
-      this.options.onDataChannelStateChange(channel.readyState);
-      this.options.onLog("DataChannel closed");
+      this.updateDataChannelState();
+      this.options.onLog("control DataChannel closed");
     });
 
     channel.addEventListener("error", () => {
-      this.options.onDataChannelStateChange(channel.readyState);
-      this.options.onLog("DataChannel error");
+      this.updateDataChannelState();
+      this.options.onLog("control DataChannel error");
     });
 
     channel.addEventListener("message", (event) => {
@@ -427,6 +484,31 @@ export class WebRtcSession {
         return;
       }
 
+      void this.handleBinaryData(event.data);
+    });
+  }
+
+  private attachFileDataChannel(channel: RTCDataChannel): void {
+    this.fileDataChannel = channel;
+    channel.binaryType = "arraybuffer";
+    this.updateDataChannelState();
+
+    channel.addEventListener("open", () => {
+      this.updateDataChannelState();
+      this.options.onLog("file DataChannel opened");
+    });
+
+    channel.addEventListener("close", () => {
+      this.updateDataChannelState();
+      this.options.onLog("file DataChannel closed");
+    });
+
+    channel.addEventListener("error", () => {
+      this.updateDataChannelState();
+      this.options.onLog("file DataChannel error");
+    });
+
+    channel.addEventListener("message", (event) => {
       void this.handleBinaryData(event.data);
     });
   }

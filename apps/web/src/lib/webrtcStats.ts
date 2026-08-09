@@ -281,9 +281,9 @@ export const collectWebRtcStats = async (
         remoteAddress: getAddress(remoteCandidate),
         localPort: localCandidate ? readNumber(localCandidate, "port") : null,
         remotePort: remoteCandidate ? readNumber(remoteCandidate, "port") : null,
-        relayProtocol: localCandidate
-          ? readString(localCandidate, "relayProtocol")
-          : null,
+        relayProtocol:
+          (localCandidate ? readString(localCandidate, "relayProtocol") : null) ??
+          (remoteCandidate ? readString(remoteCandidate, "relayProtocol") : null),
         relayState:
           localType === "relay" || remoteType === "relay"
             ? "relay"
