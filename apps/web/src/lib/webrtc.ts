@@ -23,7 +23,6 @@ type WebRtcSessionOptions = {
 
 const DATA_CHANNEL_LABEL = "transmiss-text";
 const BINARY_HEADER_BYTES = 4;
-const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const isWebRtcSignalPayload = (
@@ -114,23 +113,6 @@ const isP2PFileChunkHeader = (value: unknown): value is P2PFileChunkHeader =>
   typeof value.id === "string" &&
   typeof value.chunkIndex === "number";
 
-const buildBinaryFrame = (
-  header: P2PFileChunkHeader,
-  payload: ArrayBuffer,
-): ArrayBuffer => {
-  const encodedHeader = encoder.encode(JSON.stringify(header));
-  const frame = new Uint8Array(
-    BINARY_HEADER_BYTES + encodedHeader.byteLength + payload.byteLength,
-  );
-  const view = new DataView(frame.buffer);
-
-  view.setUint32(0, encodedHeader.byteLength, false);
-  frame.set(encodedHeader, BINARY_HEADER_BYTES);
-  frame.set(new Uint8Array(payload), BINARY_HEADER_BYTES + encodedHeader.byteLength);
-
-  return frame.buffer;
-};
-
 const parseBinaryFrame = (
   frame: ArrayBuffer,
 ): { readonly header: P2PFileChunkHeader; readonly payload: ArrayBuffer } | null => {
@@ -188,6 +170,7 @@ export class WebRtcSession {
   private readonly peerConnection: RTCPeerConnection;
   private readonly pendingCandidates: RTCIceCandidateInit[] = [];
   private dataChannel: RTCDataChannel | null = null;
+  private pendingBinaryHeader: P2PFileChunkHeader | null = null;
   private started = false;
   private closed = false;
 
@@ -284,7 +267,8 @@ export class WebRtcSession {
       return false;
     }
 
-    this.dataChannel.send(buildBinaryFrame(header, payload));
+    this.dataChannel.send(JSON.stringify(header));
+    this.dataChannel.send(payload);
     return true;
   }
 
@@ -425,6 +409,11 @@ export class WebRtcSession {
         try {
           const message: unknown = JSON.parse(event.data);
 
+          if (isP2PFileChunkHeader(message)) {
+            this.pendingBinaryHeader = message;
+            return;
+          }
+
           if (isP2PDataChannelMessage(message)) {
             this.options.onMessage(message);
             return;
@@ -455,6 +444,14 @@ export class WebRtcSession {
     }
 
     try {
+      const header = this.pendingBinaryHeader;
+
+      if (header) {
+        this.pendingBinaryHeader = null;
+        this.options.onBinaryMessage(header, frame);
+        return;
+      }
+
       const parsed = parseBinaryFrame(frame);
 
       if (!parsed) {

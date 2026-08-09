@@ -87,9 +87,9 @@ type ReceiveTransfer = {
   totalChunks: number;
 };
 
-const CHUNK_SIZE = 64 * 1024;
-const BUFFERED_AMOUNT_HIGH = 8 * 1024 * 1024;
-const BUFFERED_AMOUNT_LOW = 4 * 1024 * 1024;
+const CHUNK_SIZE = 32 * 1024;
+const BUFFERED_AMOUNT_HIGH = 2 * 1024 * 1024;
+const BUFFERED_AMOUNT_LOW = 1 * 1024 * 1024;
 const UI_UPDATE_INTERVAL_MS = 100;
 const DIAGNOSTICS_INTERVAL_MS = 1_000;
 const TRANSFER_PARAMETERS = {
@@ -377,11 +377,6 @@ export const RoomPage = ({ roomId }: RoomPageProps) => {
         }
 
         loaded += chunk.byteLength;
-
-        if (performance.now() - transfer.lastUiAt >= UI_UPDATE_INTERVAL_MS) {
-          sendP2PMessage({ type: "file-progress", id: fileId, loaded, total: file.size });
-        }
-
         updateOutgoingProgress(transfer, loaded, file.size);
       }
 
