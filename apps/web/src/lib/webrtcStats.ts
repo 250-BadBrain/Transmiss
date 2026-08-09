@@ -10,6 +10,7 @@ export type WebRtcCandidateDiagnostics = {
   readonly remoteAddress: string | null;
   readonly localPort: number | null;
   readonly remotePort: number | null;
+  readonly relayProtocol: string | null;
   readonly relayState: RelayState;
 };
 
@@ -67,6 +68,7 @@ const emptyCandidate: WebRtcCandidateDiagnostics = {
   remoteAddress: null,
   localPort: null,
   remotePort: null,
+  relayProtocol: null,
   relayState: "unknown",
 };
 
@@ -279,6 +281,9 @@ export const collectWebRtcStats = async (
         remoteAddress: getAddress(remoteCandidate),
         localPort: localCandidate ? readNumber(localCandidate, "port") : null,
         remotePort: remoteCandidate ? readNumber(remoteCandidate, "port") : null,
+        relayProtocol: localCandidate
+          ? readString(localCandidate, "relayProtocol")
+          : null,
         relayState:
           localType === "relay" || remoteType === "relay"
             ? "relay"
