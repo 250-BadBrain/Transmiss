@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type {
   ClientToWorkerMessage,
   RoomId,
+  RoomRole,
   SignalMessage,
   WorkerToClientMessage,
 } from "@transmiss/shared";
@@ -75,7 +76,7 @@ const isAllowedOrigin = (request: Request): boolean => {
 };
 
 export class RoomDurableObject extends DurableObject<Env> {
-  private readonly sockets = new Set<WebSocket>();
+  private readonly socketRoles = new Map<WebSocket, RoomRole>();
 
   override fetch(request: Request): Response {
     if (request.headers.get("upgrade")?.toLowerCase() !== WEB_SOCKET_UPGRADE) {
@@ -88,7 +89,7 @@ export class RoomDurableObject extends DurableObject<Env> {
       return json({ error: "Invalid room id" }, { status: 400 });
     }
 
-    if (this.sockets.size >= 2) {
+    if (this.socketRoles.size >= 2) {
       return json({ error: "Room is full" }, { status: 409 });
     }
 
@@ -116,12 +117,12 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private addSocket(socket: WebSocket, roomId: RoomId): void {
-    const role = this.sockets.size === 0 ? "initiator" : "receiver";
+    const role = this.getNextRole();
 
-    this.sockets.add(socket);
+    this.socketRoles.set(socket, role);
     send(socket, { type: "room-created", roomId, role });
 
-    if (this.sockets.size === 2) {
+    if (this.socketRoles.size === 2) {
       this.broadcast({ type: "peer-joined", roomId });
     }
 
@@ -166,7 +167,14 @@ export class RoomDurableObject extends DurableObject<Env> {
       }
 
       if (message.type === "create-room") {
-        send(socket, { type: "room-created", roomId });
+        const role = this.socketRoles.get(socket);
+
+        send(
+          socket,
+          role
+            ? { type: "room-created", roomId, role }
+            : { type: "room-created", roomId },
+        );
         return;
       }
 
@@ -179,7 +187,7 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private forwardSignal(sender: WebSocket, message: SignalMessage): void {
-    for (const socket of this.sockets) {
+    for (const socket of this.socketRoles.keys()) {
       if (socket !== sender) {
         send(socket, message);
       }
@@ -187,16 +195,67 @@ export class RoomDurableObject extends DurableObject<Env> {
   }
 
   private broadcast(message: WorkerToClientMessage): void {
-    for (const socket of this.sockets) {
+    for (const socket of this.socketRoles.keys()) {
       send(socket, message);
     }
   }
 
   private removeSocket(socket: WebSocket, roomId: RoomId): void {
-    const deleted = this.sockets.delete(socket);
+    const deleted = this.socketRoles.delete(socket);
 
-    if (deleted && this.sockets.size > 0) {
+    if (deleted && this.socketRoles.size > 0) {
       this.broadcast({ type: "peer-left", roomId });
+      this.normalizeRoles(roomId);
+    }
+  }
+
+  private getNextRole(): RoomRole {
+    for (const role of this.socketRoles.values()) {
+      if (role === "initiator") {
+        return "receiver";
+      }
+    }
+
+    return "initiator";
+  }
+
+  private normalizeRoles(roomId: RoomId): void {
+    const sockets = [...this.socketRoles.keys()];
+
+    if (sockets.length === 0) {
+      return;
+    }
+
+    if (sockets.length === 1) {
+      const [socket] = sockets;
+
+      if (!socket || this.socketRoles.get(socket) === "initiator") {
+        return;
+      }
+
+      this.socketRoles.set(socket, "initiator");
+      send(socket, { type: "room-created", roomId, role: "initiator" });
+      return;
+    }
+
+    if (sockets.length === 2) {
+      const [firstSocket, secondSocket] = sockets;
+
+      if (!firstSocket || !secondSocket) {
+        return;
+      }
+
+      const firstRole = this.socketRoles.get(firstSocket);
+      const secondRole = this.socketRoles.get(secondSocket);
+
+      if (firstRole !== secondRole) {
+        return;
+      }
+
+      this.socketRoles.set(firstSocket, "initiator");
+      this.socketRoles.set(secondSocket, "receiver");
+      send(firstSocket, { type: "room-created", roomId, role: "initiator" });
+      send(secondSocket, { type: "room-created", roomId, role: "receiver" });
     }
   }
 }
